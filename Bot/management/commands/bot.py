@@ -8,10 +8,10 @@ import telebot
 import undetected_chromedriver.v2 as uc
 from binance.helpers import round_step_size
 from bs4 import BeautifulSoup
+from ccxt import bybit
 from dateutil import parser
 from django.core.management.base import BaseCommand
 from html2text import html2text
-from pybit import usdt_perpetual
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 
@@ -48,12 +48,13 @@ class Command(BaseCommand):
                 options = webdriver.ChromeOptions()
                 options.add_argument("window-size=1920x1480")
                 options.add_argument("disable-dev-shm-usage")
+                options.add_argument('--headless')
+
                 driver = webdriver.Chrome(
-                    chrome_options=options, executable_path=ChromeDriverManager().install()
+                    chrome_options=options, executable_path=ChromeDriverManager(
+                        version='107.0.5304.62'
+                    ).install()
                 )
-                # from requests_html import HTMLSession
-                #
-                # session = HTMLSession()
                 for trade in traders:
 
                     link = trade.link
@@ -66,9 +67,6 @@ class Command(BaseCommand):
                     except:
                         sleep(1)
 
-                    # rs = session.get(link)
-                    # rs.html.render(timeout=40)  # Без этого не будет выполнения js кода
-
                     main_page = driver.page_source
 
                     soup = BeautifulSoup(main_page, 'html.parser')
@@ -79,8 +77,8 @@ class Command(BaseCommand):
                             if data[0].find('USDT') >= 0:
                                 symbol = data[0].split(' ')[0]
                                 size = data[1]
-                                entry_price = data[2]
-                                mark_price = data[3]
+                                entry_price = data[2].replace(',', '')
+                                mark_price = data[3].replace(',', '')
                                 pnl = data[4]
                                 date = data[5]
                                 # число на сколько нужно округлить объем для ордера
@@ -94,10 +92,9 @@ class Command(BaseCommand):
                                 for temp in templates:
                                     if temp['symbol'] == symbol:
                                         step_size = float(temp['stepSize'])
-                                        round_size = (float(temp['min_amount']))
+                                        # round_size = (float(temp['min_amount']))
                                         break
-                                if round_size == 0:
-                                    round_size = 1
+
                                 for admin in admins:
                                     token = admin.bot_token  # dev bot token
                                     my_id = admin.user_id
@@ -105,19 +102,17 @@ class Command(BaseCommand):
                                     api_key = admin.api_key
                                     api_secret = admin.api_secret
 
-                                    session = usdt_perpetual.HTTP(
-                                        endpoint='https://api.bybit.com',
-                                        api_key=api_key,
-                                        api_secret=api_secret
-                                    )
+                                    session = bybit({
+                                        "apiKey": api_key,
+                                        "secret": api_secret
+                                    })
                                     bots = telebot.TeleBot(token)
                                     try:
-                                        session.latest_information_for_symbol(
-                                            symbol=symbol,
-                                        )
+                                        # session.latest_information_for_symbol(
+                                        #     symbol=symbol,
+                                        # )
                                         curent_price = float(entry_price)
                                         # округляем и передаем в переменную
-                                        # quantity_m = round_step_size(volume, round_size)
                                         wa = (float(admin.balance) * float(admin.admin_leverage))
                                         print('wa ' + str(wa))
                                         # минимальный объем для ордера
@@ -145,32 +140,28 @@ class Command(BaseCommand):
                                                     upd=datetime.now()
                                                 )
                                                 signal.save()
-                                                try:
-                                                    session.set_leverage(
-                                                        symbol=symbol,
-                                                        buy_leverage=admin.admin_leverage,
-                                                        sell_leverage=admin.admin_leverage
-                                                    )
-                                                except Exception as e:
-                                                    print('Leverage is correct')
-                                                # создаем рыночный ордер по сигналу
-                                                order = session.place_active_order(
+                                                session.create_market_order(
                                                     symbol=symbol,
                                                     side='Sell',
-                                                    order_type='Market',
-                                                    qty=quantity,
-                                                    time_in_force="GoodTillCancel",
-                                                    reduce_only=False,
-                                                    close_on_trigger=False
+                                                    amount=quantity,
+                                                    params={
+                                                        'leverage': admin.admin_leverage,
+                                                    }
                                                 )
+                                                try:
+                                                    msg = f'🚨 *{name}* OPEN position\n' \
+                                                          f'🪙 Coin : {symbol}\n' \
+                                                          f'🚀 Trade : SELL (SHORT) 🔻\n\n' \
+                                                          f'💰 ROE :  {pnl[1]}%\n' \
+                                                          f'💰 PNL :  {pnl[0]}$\n\n' \
+                                                          f'✅ Entry : {entry_price} $\n' \
+                                                          f'✅ Exit :  $\n' \
+                                                          f'📅 Time : {date}'
+                                                    print(msg)
+                                                    bots.send_message(my_id, msg)
+                                                except Exception as e:
+                                                    print(e)
 
-                                                msg = f'New trade detected! 🚨\n' \
-                                                      f'Trader: {name}\n' \
-                                                      f'Crypto: {symbol}\n' \
-                                                      f'Trade: SELL (SHORT)🔻\n' \
-                                                      f'Price: {entry_price}\n'
-                                                print(msg)
-                                                bots.send_message(my_id, msg)
 
                                             else:
                                                 signal = Signal(
@@ -185,32 +176,28 @@ class Command(BaseCommand):
                                                     upd=datetime.now()
                                                 )
                                                 signal.save()
-                                                try:
-                                                    session.set_leverage(
-                                                        symbol=symbol,
-                                                        buy_leverage=admin.admin_leverage,
-                                                        sell_leverage=admin.admin_leverage
-                                                    )
-                                                except Exception as e:
-                                                    print('Leverage is correct')
-                                                # создаем рыночный ордер по сигналу
-                                                order = session.place_active_order(
+                                                session.create_market_order(
                                                     symbol=symbol,
                                                     side='Buy',
-                                                    order_type='Market',
-                                                    qty=quantity,
-                                                    time_in_force="GoodTillCancel",
-                                                    reduce_only=False,
-                                                    close_on_trigger=False
+                                                    amount=quantity,
+                                                    params={
+                                                        'leverage': admin.admin_leverage,
+                                                    }
                                                 )
+                                                try:
+                                                    msg = f'🚨 *{name}* OPEN position\n' \
+                                                          f'🪙 Coin : {symbol}\n' \
+                                                          f'🚀 Trade : Buy (LONG)🟢\n\n' \
+                                                          f'💰 ROE :  {pnl[1]}%\n' \
+                                                          f'💰 PNL :  {pnl[0]}$\n\n' \
+                                                          f'✅ Entry : {entry_price} $\n' \
+                                                          f'✅ Exit :  $\n' \
+                                                          f'📅 Time : {date}'
 
-                                                msg = f'New trade detected! 🚨\n' \
-                                                      f'Trader: {name}\n' \
-                                                      f'Crypto: {symbol}\n' \
-                                                      f'Trade: Buy (LONG)🟢\n' \
-                                                      f'Price: {entry_price}\n'
-                                                print(msg)
-                                                bots.send_message(my_id, msg)
+                                                    print(msg)
+                                                    bots.send_message(my_id, msg)
+                                                except Exception as e:
+                                                    print(e)
                                     except Exception as e:
                                         exc_type, exc_obj, exc_tb = sys.exc_info()
                                         print(str(e) + 'line = ' + str(exc_tb.tb_lineno))
@@ -229,9 +216,10 @@ class Command(BaseCommand):
 
                     a = now - parser.parse(date_end)
                     delta = a.seconds / 60
-                    # если срок годности ордера больше 3 минут то получаем информацию об открытой позиции
+                    # если срок годности ордера больше 3 минут, то получаем информацию об открытой позиции
                     # и закрываем её
-                    print('DELTA = ' + str(delta))
+                    pnl = str(order_s.pnl).split(' ')
+                    print('DELTA = ' + str(delta) + f' {order_s.symbol}')
                     if delta >= 4:
                         for admin in admins:
                             token = admin.bot_token  # dev bot token
@@ -240,19 +228,63 @@ class Command(BaseCommand):
                             api_key = admin.api_key
                             api_secret = admin.api_secret
 
-                            session = usdt_perpetual.HTTP(
-                                endpoint='https://api.bybit.com',
-                                api_key=api_key,
-                                api_secret=api_secret
-                            )
                             bots = telebot.TeleBot(token)
-                            session.close_position(
-                                symbol=order_s.symbol
-                            )
+                            session = bybit({
+                                "apiKey": api_key,
+                                "secret": api_secret
+                            })
+
                             order_s.delete()
-                            msg = f'POSITION Closed!\n' \
-                                  f'Symbol: {order_s.symbol}\n'
-                            bots.send_message(my_id, msg)
+                            if order_s.side == 'Buy':
+                                contracts = float(session.fetch_positions(order_s.symbol)[-1]['contracts'])
+                                session.create_market_order(
+                                    symbol=order_s.symbol,
+                                    side='Buy',
+                                    amount=contracts,
+                                    params={
+                                        'Leverage': admin.admin_leverage,
+                                        'reduceOnly': True,
+                                    }
+                                )
+                                order_s.delete()
+                                try:
+
+                                    msg = f'🚨 *{order_s.name_trader}* CLOSED position\n' \
+                                          f'🪙 Coin : {order_s.symbol}\n' \
+                                          f'🚀 Trade : Buy (LONG)🟢\n\n' \
+                                          f'💰 ROE :  {pnl[1]}%\n' \
+                                          f'💰 PNL :  {pnl[0]}$\n\n' \
+                                          f'✅ Entry : {order_s.entry_price} $\n' \
+                                          f'✅ Exit :  {order_s.mark_price}$\n' \
+                                          f'📅 Time : {order_s.date}'
+
+                                    bots.send_message(my_id, msg)
+                                except Exception as e:
+                                    print(e)
+                            else:
+                                contracts = float(session.fetch_positions(order_s.symbol)[-1]['contracts'])
+                                session.create_market_order(
+                                    symbol=order_s.symbol,
+                                    side='Sell',
+                                    amount=contracts,
+                                    params={
+                                        'Leverage': admin.admin_leverage,
+                                        'reduceOnly': True,
+                                    }
+                                )
+                                order_s.delete()
+                                try:
+                                    msg = f'🚨 *{order_s.name_trader}* CLOSED position\n' \
+                                          f'🪙 Coin : {order_s.symbol}\n' \
+                                          f'🚀 Trade : SELL (SHORT) 🔻\n\n' \
+                                          f'💰 ROE :  {pnl[1]}%\n' \
+                                          f'💰 PNL :  {pnl[0]}$\n\n' \
+                                          f'✅ Entry : {order_s.entry_price} $\n' \
+                                          f'✅ Exit :  {order_s.mark_price}$\n' \
+                                          f'📅 Time : {order_s.date}'
+                                    bots.send_message(my_id, msg)
+                                except Exception as e:
+                                    print(e)
                             Signal.objects.filter(is_active=True).update(is_active=False)
 
                 sig_old = Signal.objects.filter(is_active=False).delete()
