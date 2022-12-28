@@ -11,9 +11,11 @@ from bs4 import BeautifulSoup
 from ccxt import bybit
 from dateutil import parser
 from django.core.management.base import BaseCommand
+from fake_useragent import UserAgent, FakeUserAgentError
 from html2text import html2text
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 
 from Bot.models import Signal, Traders, Admin
 
@@ -37,31 +39,42 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         while True:
+            sleep(20)
             try:
+                ua = UserAgent()
+
+                try:
+                    user_agent = ua.random
+                except FakeUserAgentError:
+                    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, " \
+                                 "like Gecko) Chrome/74.0.3729.169 Safari/537.36"
+
                 traders = Traders.objects.all()
 
                 options = uc.ChromeOptions()
-                options.headless = True
                 options.add_experimental_option("excludeSwitches", ["enable-logging"])
-                from webdriver_manager.chrome import ChromeDriverManager
-
-                options = webdriver.ChromeOptions()
                 options.add_argument("window-size=1920x1480")
                 options.add_argument("disable-dev-shm-usage")
                 options.add_argument('--headless')
-
-                driver = webdriver.Chrome(
-                    chrome_options=options, executable_path=ChromeDriverManager(
-                        version='107.0.5304.62'
-                    ).install()
-                )
+                try:
+                    driver = webdriver.Chrome(
+                        chrome_options=options, executable_path=ChromeDriverManager(
+                            version='104.0.5112.79'
+                        ).install()
+                    )
+                except:
+                    driver = webdriver.Chrome(
+                        chrome_options=options, executable_path=ChromeDriverManager(
+                            version='104.0.5112.79'
+                        ).install()
+                    )
                 for trade in traders:
 
                     link = trade.link
                     name = trade.name
 
                     driver.get(link)
-                    driver.implicitly_wait(3)
+                    driver.implicitly_wait(5)
                     try:
                         driver.find_element(By.ID, 'onetrust-accept-btn-handler').click()
                     except:
@@ -71,6 +84,7 @@ class Command(BaseCommand):
 
                     soup = BeautifulSoup(main_page, 'html.parser')
                     text = soup.find_all('tbody', {'class': 'bn-table-tbody'})
+                    driver.implicitly_wait(5)
                     try:
                         for tex in text[0].find_all_next('tr'):
                             data = html2text(str(tex)).replace('\n', '').split('|')
@@ -81,8 +95,6 @@ class Command(BaseCommand):
                                 mark_price = data[3].replace(',', '')
                                 pnl = data[4]
                                 date = data[5]
-                                # число на сколько нужно округлить объем для ордера
-                                round_size = 0
                                 # шаг цены в торговой паре
                                 step_size = 1
                                 pprint(data)
@@ -92,7 +104,6 @@ class Command(BaseCommand):
                                 for temp in templates:
                                     if temp['symbol'] == symbol:
                                         step_size = float(temp['stepSize'])
-                                        # round_size = (float(temp['min_amount']))
                                         break
 
                                 for admin in admins:
@@ -108,9 +119,6 @@ class Command(BaseCommand):
                                     })
                                     bots = telebot.TeleBot(token)
                                     try:
-                                        # session.latest_information_for_symbol(
-                                        #     symbol=symbol,
-                                        # )
                                         curent_price = float(entry_price)
                                         # округляем и передаем в переменную
                                         wa = (float(admin.balance) * float(admin.admin_leverage))
@@ -161,8 +169,6 @@ class Command(BaseCommand):
                                                     bots.send_message(my_id, msg)
                                                 except Exception as e:
                                                     print(e)
-
-
                                             else:
                                                 signal = Signal(
                                                     name_trader=name,
@@ -235,17 +241,22 @@ class Command(BaseCommand):
                             })
 
                             order_s.delete()
+
                             if order_s.side == 'Buy':
-                                contracts = float(session.fetch_positions(order_s.symbol)[-1]['contracts'])
-                                session.create_market_order(
-                                    symbol=order_s.symbol,
-                                    side='Buy',
-                                    amount=contracts,
-                                    params={
-                                        'Leverage': admin.admin_leverage,
-                                        'reduceOnly': True,
-                                    }
-                                )
+                                try:
+                                    contracts = float(session.fetch_positions(order_s.symbol)[-1]['contracts'])
+                                    session.create_market_order(
+                                        symbol=order_s.symbol,
+                                        side='Sell',
+                                        amount=contracts,
+                                        params={
+                                            'Leverage': admin.admin_leverage,
+                                            'reduceOnly': True,
+                                        }
+                                    )
+                                except Exception as e:
+                                    print(e)
+                                    print('Not have position')
                                 order_s.delete()
                                 try:
 
@@ -262,16 +273,20 @@ class Command(BaseCommand):
                                 except Exception as e:
                                     print(e)
                             else:
-                                contracts = float(session.fetch_positions(order_s.symbol)[-1]['contracts'])
-                                session.create_market_order(
-                                    symbol=order_s.symbol,
-                                    side='Sell',
-                                    amount=contracts,
-                                    params={
-                                        'Leverage': admin.admin_leverage,
-                                        'reduceOnly': True,
-                                    }
-                                )
+                                try:
+                                    contracts = float(session.fetch_positions(order_s.symbol)[-1]['contracts'])
+                                    session.create_market_order(
+                                        symbol=order_s.symbol,
+                                        side='Buy',
+                                        amount=contracts,
+                                        params={
+                                            'Leverage': admin.admin_leverage,
+                                            'reduceOnly': True,
+                                        }
+                                    )
+                                except Exception as e:
+                                    print(e)
+                                    print('Not have position')
                                 order_s.delete()
                                 try:
                                     msg = f'🚨 *{order_s.name_trader}* CLOSED position\n' \
@@ -287,10 +302,8 @@ class Command(BaseCommand):
                                     print(e)
                             Signal.objects.filter(is_active=True).update(is_active=False)
 
-                sig_old = Signal.objects.filter(is_active=False).delete()
-
+                Signal.objects.filter(is_active=False).delete()
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 print(str(e) + 'line = ' + str(exc_tb.tb_lineno))
-                sleep(1)
-            sleep(5)
+                sleep(20)
