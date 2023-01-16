@@ -68,7 +68,7 @@ def get_trader(trade, admins):
     soup = BeautifulSoup(main_page, 'html.parser')
     text = soup.find_all('tbody', {'class': 'bn-table-tbody'})
     driver.implicitly_wait(5)
-    # driver.close()
+    driver.close()
     try:
         for tex in text[0].find_all_next('tr'):
             data = html2text(str(tex)).replace('\n', '').split('|')
