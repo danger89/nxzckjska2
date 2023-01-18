@@ -10,7 +10,7 @@ html2text~=2020.1.16
 whitenoise
 pyTelegramBotAPI
 pathlib~=1.0.1
-fake_useragent
+fake-useragent
 undetected_chromedriver
 webdriver_manager
 more_itertools
